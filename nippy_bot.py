@@ -1,9 +1,15 @@
+from __future__ import print_function
 import praw
 import os
 import time
 import re
+import sys
 import sqlite3
 from datetime import datetime
+
+# for printing errors
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
 
 # basic configs for execution
 bot_name = "NippyBrutalBot".lower()
@@ -18,7 +24,7 @@ sleep_delay = 60
 connection = sqlite3.connect('database.db')
 c = connection.cursor()
 
-# # used only when creating
+## used only when creating
 # with open('create_db.sql') as f:
 #     c.executescript(f.read())
 #     connection.commit()
@@ -30,12 +36,10 @@ if reset_database:
 #sql commands
 select_comment_with_id = 'SELECT ID FROM comments WHERE ID = ?'
 insert_comment = 'INSERT INTO comments (ID, PERMALINK, DATE_ADDED) VALUES (?, ?, ?)'
-insert_stats = 'INSERT INTO statistics (COMMENTS_CHECKED, COMMENTS_MATCHED, DATE_EXECUTED) VALUES (?, ?, ?)'
 insert_to_reply = 'INSERT INTO to_reply (ID, RESPONSE) VALUES (?, ?)'
 select_to_reply = 'SELECT ID, RESPONSE FROM to_reply'
 select_to_reply_with_id = 'SELECT ID FROM to_reply WHERE ID = ?'
 delete_to_reply = 'DELETE FROM to_reply WHERE ID = ?'
-insert_error_log = 'INSERT INTO logs VALUES (?, ?)'
 
 # regex to find match in comment and reply
 regex = "gfycat.com/(BrutalSavageRekt|NippyKindLangur)"
@@ -91,11 +95,6 @@ def is_not_reply(comment):
     #TODO: check if comment was made in reply to bot
     return True
 
-def log_error(error):
-    print("Error: {}".format(error))
-    c.execute(insert_error_log, [str(error), time.time()])
-    connection.commit()
-
 def reply_to_old_comments(comments):
     for comment_info in comments:
         comment = reddit.comment(comment_info[0])
@@ -105,7 +104,6 @@ def reply_to_old_comments(comments):
             register_comment(comment)
         except praw.exceptions.PRAWException as e:
             print("Failed to reply to old comment, will try again later")
-            log_error(e)
             return
 
 c.execute(select_to_reply)
@@ -140,15 +138,15 @@ for submission in subreddits.hot(limit=posts_limit):
                             register_comment(comment)
                             comments_replied += 1
                         except praw.exceptions.PRAWException as e:
-                            log_error(e)
+                            eprint(time.strftime("Error when replying to comment: %a %Y-%m-%d %H:%M:%S saving for later.", time.localtime()) + " Comment permalink = reddit.com{}".format(comment.permalink()))
                             save_comment_to_reply(comment, reply)
                             comments_saved += 1
 
 print("All operations done. {} comments checked. {} comments matched. {} comments replied to. {} comments saved for later.".format(comments_checked, comments_matched, comments_replied, comments_saved))
+print(time.strftime("Current time: %a %Y-%m-%d %H:%M:%S", time.localtime()))
+print("---------------------------------")
 
-#saving stats and closing db connection
-c.execute(insert_stats, [comments_checked, comments_replied, time.time()])
-connection.commit()
+# closing db connection
 connection.close()
 
 # with open(filename_replied_comments, "w") as f:
