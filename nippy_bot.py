@@ -9,7 +9,9 @@ from datetime import datetime
 
 # for printing errors
 def eprint(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
+    print(time.strftime("%a %Y-%m-%d %H:%M:%S -", time.localtime()), *args, file=sys.stderr, **kwargs)
+
+print(time.strftime("Start time: %a %Y-%m-%d %H:%M:%S", time.localtime()))
 
 # basic configs for execution
 bot_name = "NippyBrutalBot".lower()
@@ -128,7 +130,7 @@ for submission in subreddits.hot(limit=posts_limit):
         for comment in flat_comments:
             comments_checked += 1
             if str(comment.author).lower() != bot_name: #checking if comment not made by bot
-                if not was_comment_checked(comment) and is_not_reply(comment):
+                if not was_comment_checked(comment) and is_not_reply(comment): #if comment was already replied (or will be replied to) and if is not reply to bot
                     match = get_match(comment.body)
                     if match:
                         comments_matched += 1
@@ -138,12 +140,12 @@ for submission in subreddits.hot(limit=posts_limit):
                             register_comment(comment)
                             comments_replied += 1
                         except praw.exceptions.PRAWException as e:
-                            eprint(time.strftime("Error when replying to comment: %a %Y-%m-%d %H:%M:%S saving for later.", time.localtime()) + " Comment permalink = reddit.com{}".format(comment.permalink()))
+                            eprint("Error when trying to reply to commnet, saving for later. Comment permalink = reddit.com{}".format(comment.permalink()))
                             save_comment_to_reply(comment, reply)
                             comments_saved += 1
 
 print("All operations done. {} comments checked. {} comments matched. {} comments replied to. {} comments saved for later.".format(comments_checked, comments_matched, comments_replied, comments_saved))
-print(time.strftime("Current time: %a %Y-%m-%d %H:%M:%S", time.localtime()))
+print(time.strftime("End time: %a %Y-%m-%d %H:%M:%S", time.localtime()))
 print("---------------------------------")
 
 # closing db connection
