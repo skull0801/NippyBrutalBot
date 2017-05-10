@@ -5,56 +5,24 @@ import time
 import re
 import sys
 import sqlite3
+import configparser
 from datetime import datetime
+
+configs_file = 'nippy_bot.cfg'
+c = configparser.ConfigParser()
+c.read(configs_file)
+
+bot_name = c['variables']['BotName']
+dry_run = eval(c['variables']['DryRun'])
+subreddits_to_search = c['variables']['Subs']
+posts_limit = eval(c['variables']['MaxPosts'])
+post_age_limit = eval(c['variables']['MaxPostAge'])
+reset_database = eval(c['variables']['ResetDB'])
+sleep_delay = eval(c['variables']['SleepDelay'])
 
 # for printing errors
 def eprint(*args, **kwargs):
     print(time.strftime("%a %Y-%m-%d %H:%M:%S -", time.localtime()), *args, file=sys.stderr, **kwargs)
-
-print(time.strftime("Start time: %a %Y-%m-%d %H:%M:%S", time.localtime()))
-
-# basic configs for execution
-bot_name = "NippyBrutalBot".lower()
-dry_run = False
-subreddits_to_search = "Dota2"
-posts_limit = 25
-post_age_limit = 24 * 60 * 60 # in seconds
-reset_database = False
-sleep_delay = 60
-
-#connecting to database
-connection = sqlite3.connect('database.db')
-c = connection.cursor()
-
-## used only when creating
-# with open('create_db.sql') as f:
-#     c.executescript(f.read())
-#     connection.commit()
-if reset_database:
-    with open('clean_db.sql') as f:
-        c.executescript(f.read())
-        connection.commit()
-
-#sql commands
-select_comment_with_id = 'SELECT ID FROM comments WHERE ID = ?'
-insert_comment = 'INSERT INTO comments (ID, PERMALINK, DATE_ADDED) VALUES (?, ?, ?)'
-insert_to_reply = 'INSERT INTO to_reply (ID, RESPONSE) VALUES (?, ?)'
-select_to_reply = 'SELECT ID, RESPONSE FROM to_reply'
-select_to_reply_with_id = 'SELECT ID FROM to_reply WHERE ID = ?'
-delete_to_reply = 'DELETE FROM to_reply WHERE ID = ?'
-
-# regex to find match in comment and reply
-regex = "gfycat.com/(BrutalSavageRekt|NippyKindLangur)"
-regex2 = "(Brutal{}Savage{}Rekt{}|Nippy{}Kind{}Langur{})".replace('{}', '[.,\s]*')
-terms = ["gfycat.com/BrutalSavageRekt", "gfycat.com/NippyKindLangur", "NippyKindLangur", "BrutalSavageRekt"]
-# #test terms
-# regex = "word|nice"
-# terms = ["word", "nice"]
-terms = [term.lower() for term in terms]
-replies = ["gfycat.com/NippyKindLangur", "gfycat.com/BrutalSavageRekt", "gfycat.com/BrutalSavageRekt", "gfycat.com/NippyKindLangur"]
-
-reddit = praw.Reddit('bot1')
-subreddits = reddit.subreddit(subreddits_to_search)
 
 def get_reply(match):
     index = terms.index(match.lower())
@@ -62,7 +30,7 @@ def get_reply(match):
     return reply
 
 def reply_to_comment(comment, reply):
-    print("Replying to {0}'s comment with {1}. Original comment: {2}".format(comment.author, reply, comment.body))
+    print("Replying to {0}'s comment with {1}. Original comment permalink: reddit.com{2}".format(comment.author, reply, comment.permalink()))
     if not dry_run:
         comment.reply(reply)
 
@@ -108,6 +76,42 @@ def reply_to_old_comments(comments):
             print("Failed to reply to old comment, will try again later")
             return
 
+print(time.strftime("Start time: %a %Y-%m-%d %H:%M:%S", time.localtime()))
+
+#connecting to database
+connection = sqlite3.connect('database.db')
+c = connection.cursor()
+
+## used only when creating
+# with open('create_db.sql') as f:
+#     c.executescript(f.read())
+#     connection.commit()
+if reset_database:
+    with open('clean_db.sql') as f:
+        c.executescript(f.read())
+        connection.commit()
+
+#sql commands
+select_comment_with_id = 'SELECT ID FROM comments WHERE ID = ?'
+insert_comment = 'INSERT INTO comments (ID, PERMALINK, DATE_ADDED) VALUES (?, ?, ?)'
+insert_to_reply = 'INSERT INTO to_reply (ID, RESPONSE) VALUES (?, ?)'
+select_to_reply = 'SELECT ID, RESPONSE FROM to_reply'
+select_to_reply_with_id = 'SELECT ID FROM to_reply WHERE ID = ?'
+delete_to_reply = 'DELETE FROM to_reply WHERE ID = ?'
+
+# regex to find match in comment and reply
+regex = "gfycat.com/(BrutalSavageRekt|NippyKindLangur)"
+regex2 = "(Brutal{}Savage{}Rekt{}|Nippy{}Kind{}Langur{})".replace('{}', '[.,\s]*')
+terms = ["gfycat.com/BrutalSavageRekt", "gfycat.com/NippyKindLangur", "NippyKindLangur", "BrutalSavageRekt"]
+# #test terms
+# regex = "word|nice"
+# terms = ["word", "nice"]
+terms = [term.lower() for term in terms]
+replies = ["gfycat.com/NippyKindLangur", "gfycat.com/BrutalSavageRekt", "gfycat.com/BrutalSavageRekt", "gfycat.com/NippyKindLangur"]
+
+reddit = praw.Reddit('bot1')
+subreddits = reddit.subreddit(subreddits_to_search)
+
 c.execute(select_to_reply)
 comments_to_reply = c.fetchall()
 if comments_to_reply:
@@ -140,7 +144,7 @@ for submission in subreddits.hot(limit=posts_limit):
                             register_comment(comment)
                             comments_replied += 1
                         except praw.exceptions.PRAWException as e:
-                            eprint("Error when trying to reply to commnet, saving for later. Comment permalink = reddit.com{}".format(comment.permalink()))
+                            eprint("Error when trying to reply to comment, saving for later. Comment permalink = https://reddit.com{}. [{}]".format(comment.permalink(), e))
                             save_comment_to_reply(comment, reply)
                             comments_saved += 1
 
