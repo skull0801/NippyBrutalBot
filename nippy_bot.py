@@ -52,8 +52,8 @@ def was_comment_checked(comment):
     else:
         return True
 
-def register_comment(comment):
-    c.execute(insert_comment, [comment.id, comment.permalink(), time.time()])
+def register_comment(comment, valid):
+    c.execute(insert_comment, [comment.id, comment.permalink(), time.time(), 1 if valid else 0])
     connection.commit()
 
 def save_comment_to_reply(comment, reply):
@@ -61,17 +61,40 @@ def save_comment_to_reply(comment, reply):
     c.execute(insert_to_reply, [comment.id, reply])
     connection.commit()
 
+def is_top_level_comment(comment):
+    return comment.link_id == comment.parent_id
+
+def comment_matches(comment):
+    if not is_top_level_comment(comment):
+        if comment_matches(comment.parent()):
+            return True
+        else:
+            if was_comment_replied(comment):
+                return False
+            else:
+                return True
+    elif was_comment_replied(comment):
+        return False
+    else:
+        return True
+
+# checks if comment has already been replied with a comment the bot would've given
+def was_comment_replied(comment):
+    #TODO implement
+    return False
+
 def is_not_reply(comment):
     #TODO: check if comment was made in reply to bot
     return True
 
 def reply_to_old_comments(comments):
+    #TODO: validate if old_comments should still be replied to
     for comment_info in comments:
         comment = reddit.comment(comment_info[0])
         try:
             reply_to_comment(comment, comment_info[1])
             c.execute(delete_to_reply, [comment.id])
-            register_comment(comment)
+            register_comment(comment, True)
         except praw.exceptions.PRAWException as e:
             print("Failed to reply to old comment, will try again later")
             return
@@ -93,7 +116,7 @@ if reset_database:
 
 #sql commands
 select_comment_with_id = 'SELECT ID FROM comments WHERE ID = ?'
-insert_comment = 'INSERT INTO comments (ID, PERMALINK, DATE_ADDED) VALUES (?, ?, ?)'
+insert_comment = 'INSERT INTO comments (ID, PERMALINK, DATE_ADDED, VALID) VALUES (?, ?, ?, ?)'
 insert_to_reply = 'INSERT INTO to_reply (ID, RESPONSE) VALUES (?, ?)'
 select_to_reply = 'SELECT ID, RESPONSE FROM to_reply'
 select_to_reply_with_id = 'SELECT ID FROM to_reply WHERE ID = ?'
@@ -131,24 +154,50 @@ for submission in subreddits.hot(limit=posts_limit):
         all_comments = submission.comments
         all_comments.replace_more(limit=None, threshold=0) #get all comments from thread
         flat_comments = all_comments.list() # comments in list instead of tree
+        #sweeping through comments and getting possible matches
+        to_reply = set()
+        matches = {}
         for comment in flat_comments:
             comments_checked += 1
             if str(comment.author).lower() != bot_name: #checking if comment not made by bot
-                if not was_comment_checked(comment) and is_not_reply(comment): #if comment was already replied (or will be replied to) and if is not reply to bot
+                if not was_comment_checked(comment): #if comment was not already replied (or will be replied to)
                     match = get_match(comment.body)
                     if match:
+                        matches[comment.id] = match
+                        to_reply.add(comment)
                         comments_matched += 1
-                        reply = get_reply(match)
-                        try:
-                            reply_to_comment(comment, reply)
-                            register_comment(comment)
-                            comments_replied += 1
-                        except praw.exceptions.PRAWException as e:
-                            eprint("Error when trying to reply to comment, saving for later. Comment permalink = https://reddit.com{}. [{}]".format(comment.permalink(), e))
-                            save_comment_to_reply(comment, reply)
-                            comments_saved += 1
 
-print("All operations done. {} comments checked. {} comments matched. {} comments replied to. {} comments saved for later.".format(comments_checked, comments_matched, comments_replied, comments_saved))
+        to_reply_ids = {comment.id for comment in to_reply}
+        to_remove = set()
+        #removing invalid comments
+        for comment in to_reply:
+            if is_top_level_comment(comment):
+                continue
+            if was_comment_checked(comment.parent()) or comment.id in to_reply_ids:
+                to_remove.add(comment)
+                to_remove.add(comment.parent())
+
+        for comment in to_remove:
+            if not was_comment_checked(comment):
+                register_comment(comment, False)
+            #print("Would've replied to {0}'s comment but it either was already replied to or is a reply. Original comment permalink: reddit.com{1}".format(comment.author, comment.permalink()))
+
+        to_reply = list(to_reply - to_remove)
+        for comment in to_reply:
+            match = matches[comment.id]
+            reply = get_reply(match)
+            try:
+                reply_to_comment(comment, reply)
+                register_comment(comment, True)
+                comments_replied += 1
+            except praw.exceptions.PRAWException as e:
+                eprint("Error when trying to reply to comment, saving for later. Comment permalink = https://reddit.com{}. [{}]".format(comment.permalink(), e))
+                save_comment_to_reply(comment, reply)
+                comments_saved += 1
+
+
+
+print("All operations done. {} comments checked. {} comments matched. {} comments invalidated. {} comments replied to. {} comments saved for later.".format(comments_checked, comments_matched, comments_matched - comments_replied, comments_replied, comments_saved))
 print(time.strftime("End time: %a %Y-%m-%d %H:%M:%S", time.localtime()))
 print("---------------------------------")
 
