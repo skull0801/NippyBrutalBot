@@ -12,7 +12,7 @@ configs_file = 'nippy_bot.cfg'
 c = configparser.ConfigParser()
 c.read(configs_file)
 
-bot_name = c['variables']['BotName']
+bot_name = c['variables']['BotName'].lower()
 dry_run = eval(c['variables']['DryRun'])
 subreddits_to_search = c['variables']['Subs']
 posts_limit = eval(c['variables']['MaxPosts'])
