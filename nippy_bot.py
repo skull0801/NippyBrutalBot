@@ -173,7 +173,7 @@ for submission in subreddits.hot(limit=posts_limit):
         for comment in to_reply:
             if is_top_level_comment(comment):
                 continue
-            if was_comment_checked(comment.parent()) or comment.id in to_reply_ids:
+            if was_comment_checked(comment.parent()) or comment.parent().id in to_reply_ids:
                 to_remove.add(comment)
                 to_remove.add(comment.parent())
 
