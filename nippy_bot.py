@@ -8,7 +8,7 @@ import sqlite3
 import configparser
 from datetime import datetime
 
-configs_file = 'nippy_bot.cfg'
+configs_file = 'test.cfg'
 c = configparser.ConfigParser()
 c.read(configs_file)
 
@@ -16,6 +16,7 @@ bot_name = c['variables']['BotName'].lower()
 dry_run = eval(c['variables']['DryRun'])
 subreddits_to_search = c['variables']['Subs']
 posts_limit = eval(c['variables']['MaxPosts'])
+db_file = c['variables']['DataBaseFileName']
 post_age_limit = eval(c['variables']['MaxPostAge'])
 reset_database = eval(c['variables']['ResetDB'])
 sleep_delay = eval(c['variables']['SleepDelay'])
@@ -25,12 +26,11 @@ def eprint(*args, **kwargs):
     print(time.strftime("%a %Y-%m-%d %H:%M:%S -", time.localtime()), *args, file=sys.stderr, **kwargs)
 
 def get_reply(match):
-    index = terms.index(match.lower())
-    reply = "https://" + replies[index]
+    reply = "https://" + replies[terms[match.lower()]]
     return reply
 
 def reply_to_comment(comment, reply):
-    print("Replying to {0}'s comment with {1}. Original comment permalink: reddit.com{2}".format(comment.author, reply, comment.permalink()))
+    print("Replying to {0}'s comment with {1}. Original comment permalink: https://reddit.com{2}".format(comment.author.name, reply, comment.permalink()))
     if not dry_run:
         comment.reply(reply)
 
@@ -43,6 +43,18 @@ def get_match(string):
         if match:
             match = re.sub('[.,\s]', '', match[0])
         return match
+
+# checks link first (if there is one), then checks title, then checks selftext (if there is any), returns None if no match
+def get_match_in_submission(submission):
+    if not submission.is_self:
+        match = get_match(submission.url)
+        if match:
+            return match
+    match = get_match(submission.title)
+    if match:
+        return match
+    if submission.is_self:
+        return get_match(submission.selftext)
 
 def was_comment_checked(comment):
     c.execute(select_comment_with_id, [comment.id])
@@ -78,14 +90,13 @@ def comment_matches(comment):
     else:
         return True
 
-# checks if comment has already been replied with a comment the bot would've given
-def was_comment_replied(comment):
-    #TODO implement
+#check if there is a comment made by the bot up the comment's chain
+def is_comment_reply_to_bot(comment):
+    while not comment.is_root:
+        if comment.author and comment.author.name == bot_name:
+            return True
+        comment = comment.parent()
     return False
-
-def is_not_reply(comment):
-    #TODO: check if comment was made in reply to bot
-    return True
 
 def reply_to_old_comments(comments):
     #TODO: validate if old_comments should still be replied to
@@ -102,13 +113,14 @@ def reply_to_old_comments(comments):
 print(time.strftime("Start time: %a %Y-%m-%d %H:%M:%S", time.localtime()))
 
 #connecting to database
-connection = sqlite3.connect('database.db')
+connection = sqlite3.connect(db_file)
 c = connection.cursor()
 
-## used only when creating
-# with open('create_db.sql') as f:
-#     c.executescript(f.read())
-#     connection.commit()
+# create tables if they don't exist
+with open('create_db.sql') as f:
+    c.executescript(f.read())
+    connection.commit()
+
 if reset_database:
     with open('clean_db.sql') as f:
         c.executescript(f.read())
@@ -124,13 +136,15 @@ delete_to_reply = 'DELETE FROM to_reply WHERE ID = ?'
 
 # regex to find match in comment and reply
 regex = "gfycat.com/(BrutalSavageRekt|NippyKindLangur)"
-regex2 = "(Brutal{}Savage{}Rekt{}|Nippy{}Kind{}Langur{})".replace('{}', '[.,\s]*')
-terms = ["gfycat.com/BrutalSavageRekt", "gfycat.com/NippyKindLangur", "NippyKindLangur", "BrutalSavageRekt"]
-# #test terms
-# regex = "word|nice"
-# terms = ["word", "nice"]
-terms = [term.lower() for term in terms]
-replies = ["gfycat.com/NippyKindLangur", "gfycat.com/BrutalSavageRekt", "gfycat.com/BrutalSavageRekt", "gfycat.com/NippyKindLangur"]
+regex2 = "(Brutal{0}Savage{0}Rekt{0}|Nippy{0}Kind{0}Langur{0})".format('[.,\s]*')
+terms = {"gfycat.com/BrutalSavageRekt": 0,
+         "gfycat.com/NippyKindLangur": 1,
+         "NippyKindLangur": 1,
+         "BrutalSavageRekt": 0}
+replies = ["gfycat.com/NippyKindLangur", "gfycat.com/BrutalSavageRekt"]
+
+# setting lowercase keys in dict
+terms = dict((k.lower(), v) for k, v in terms.items())
 
 reddit = praw.Reddit('bot1')
 subreddits = reddit.subreddit(subreddits_to_search)
@@ -143,7 +157,7 @@ if comments_to_reply:
 else:
     print("No old comments to reply to.")
 
-print("Searching for new comments to reply.")
+print("Searching for new comments to reply on /r/{}.".format(subreddits_to_search))
 
 comments_checked, comments_matched, comments_replied, comments_saved = 0, 0, 0, 0
 for submission in subreddits.hot(limit=posts_limit):
@@ -154,12 +168,16 @@ for submission in subreddits.hot(limit=posts_limit):
         all_comments = submission.comments
         all_comments.replace_more(limit=None, threshold=0) #get all comments from thread
         flat_comments = all_comments.list() # comments in list instead of tree
+
         #sweeping through comments and getting possible matches
         to_reply = set()
         matches = {}
+
         for comment in flat_comments:
+            if comment.author == None:
+                continue
             comments_checked += 1
-            if str(comment.author).lower() != bot_name: #checking if comment not made by bot
+            if comment.author.name.lower() != bot_name: #checking if comment not made by bot
                 if not was_comment_checked(comment): #if comment was not already replied (or will be replied to)
                     match = get_match(comment.body)
                     if match:
@@ -173,14 +191,15 @@ for submission in subreddits.hot(limit=posts_limit):
         for comment in to_reply:
             if is_top_level_comment(comment):
                 continue
-            if was_comment_checked(comment.parent()) or comment.parent().id in to_reply_ids:
+            #do not reply if comment is reply to bot, or if parent was replied (or will be replied) to
+            if comment.parent().id in to_reply_ids or was_comment_checked(comment.parent()) or is_comment_reply_to_bot(comment):
                 to_remove.add(comment)
                 to_remove.add(comment.parent())
 
         for comment in to_remove:
             if not was_comment_checked(comment):
                 register_comment(comment, False)
-            #print("Would've replied to {0}'s comment but it either was already replied to or is a reply. Original comment permalink: reddit.com{1}".format(comment.author, comment.permalink()))
+            print("Would've replied to {0}'s comment but it either was already replied to or is a reply. Original comment permalink: https://reddit.com{1}".format(comment.author, comment.permalink()))
 
         to_reply = list(to_reply - to_remove)
         for comment in to_reply:
