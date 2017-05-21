@@ -8,7 +8,7 @@ import sqlite3
 import configparser
 from datetime import datetime
 
-configs_file = 'test.cfg'
+configs_file = 'nippy_bot.cfg'
 c = configparser.ConfigParser()
 c.read(configs_file)
 
@@ -26,7 +26,7 @@ def eprint(*args, **kwargs):
     print(time.strftime("%a %Y-%m-%d %H:%M:%S -", time.localtime()), *args, file=sys.stderr, **kwargs)
 
 def get_reply(match):
-    reply = "https://" + replies[terms[match.lower()]]
+    reply = "https://" + replies[reply_terms[match.lower()]]
     return reply
 
 def reply_to_comment(comment, reply):
@@ -34,27 +34,40 @@ def reply_to_comment(comment, reply):
     if not dry_run:
         comment.reply(reply)
 
-def get_match(string):
-    match = re.search(regex, string, re.IGNORECASE)
-    if match:
-        return match[0]
-    else:
-        match = re.search(regex2, string, re.IGNORECASE)
+def get_match(string, regexes):
+    for (regex, sanitize) in regexes:
+        match = re.search(regex, string, re.IGNORECASE)
         if match:
-            match = re.sub('[.,\s]', '', match[0])
-        return match
+            return re.sub("[.,\s]", "", match[0]) if sanitize else match[0]
+    return None
+
+def is_special_case(match):
+    return match.lower() in chain_terms.keys() if match else None
+
+def get_match_in_chain(match, comment):
+    terms = chain_terms[match.lower()]
+    parent = comment
+    for term in terms:
+        if is_top_level_comment(parent):
+            return None
+        parent = parent.parent()
+        new_match = get_match(parent.body, [("{0}{1}".format(term, "[.,\s]*"), True)])
+        if not new_match:
+            return None
+    return match
+
 
 # checks link first (if there is one), then checks title, then checks selftext (if there is any), returns None if no match
-def get_match_in_submission(submission):
-    if not submission.is_self:
-        match = get_match(submission.url)
-        if match:
-            return match
-    match = get_match(submission.title)
-    if match:
-        return match
-    if submission.is_self:
-        return get_match(submission.selftext)
+# def get_match_in_submission(submission):
+#     if not submission.is_self:
+#         match = get_match(submission.url)
+#         if match:
+#             return match
+#     match = get_match(submission.title)
+#     if match:
+#         return match
+#     if submission.is_self:
+#         return get_match(submission.selftext)
 
 def was_comment_checked(comment):
     c.execute(select_comment_with_id, [comment.id])
@@ -65,8 +78,9 @@ def was_comment_checked(comment):
         return True
 
 def register_comment(comment, valid):
-    c.execute(insert_comment, [comment.id, comment.permalink(), time.time(), 1 if valid else 0])
-    connection.commit()
+    if not dry_run:
+        c.execute(insert_comment, [comment.id, comment.permalink(), time.time(), 1 if valid else 0])
+        connection.commit()
 
 def save_comment_to_reply(comment, reply):
     print("Saving comment [[{}]] to reply later, reply: \'{}\'".format(comment.id, reply))
@@ -135,16 +149,23 @@ select_to_reply_with_id = 'SELECT ID FROM to_reply WHERE ID = ?'
 delete_to_reply = 'DELETE FROM to_reply WHERE ID = ?'
 
 # regex to find match in comment and reply
-regex = "gfycat.com/(BrutalSavageRekt|NippyKindLangur)"
+regex1 = "gfycat.com/(BrutalSavageRekt|NippyKindLangur)"
 regex2 = "(Brutal{0}Savage{0}Rekt{0}|Nippy{0}Kind{0}Langur{0})".format('[.,\s]*')
-terms = {"gfycat.com/BrutalSavageRekt": 0,
+regex3 = "(Rekt{0}|Langur{0})".format('[.,\s]*')
+regexes = [(regex1, False), (regex2, True), (regex3, True)]
+reply_terms = {"gfycat.com/BrutalSavageRekt": 0,
          "gfycat.com/NippyKindLangur": 1,
          "NippyKindLangur": 1,
-         "BrutalSavageRekt": 0}
+         "BrutalSavageRekt": 0,
+         "Rekt": 0,
+         "Langur": 1}
 replies = ["gfycat.com/NippyKindLangur", "gfycat.com/BrutalSavageRekt"]
+chain_terms = {"Rekt": ["Savage", "Brutal"],
+               "Langur": ["Kind", "Nippy"]}
 
 # setting lowercase keys in dict
-terms = dict((k.lower(), v) for k, v in terms.items())
+reply_terms = dict((k.lower(), v) for k, v in reply_terms.items())
+chain_terms = dict((k.lower(), v) for k, v in chain_terms.items())
 
 reddit = praw.Reddit('bot1')
 subreddits = reddit.subreddit(subreddits_to_search)
@@ -179,7 +200,9 @@ for submission in subreddits.hot(limit=posts_limit):
             comments_checked += 1
             if comment.author.name.lower() != bot_name: #checking if comment not made by bot
                 if not was_comment_checked(comment): #if comment was not already replied (or will be replied to)
-                    match = get_match(comment.body)
+                    match = get_match(comment.body, regexes)
+                    if is_special_case(match):
+                        match = get_match_in_chain(match, comment)
                     if match:
                         matches[comment.id] = match
                         to_reply.add(comment)
