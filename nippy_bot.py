@@ -107,9 +107,9 @@ def comment_matches(comment):
 #check if there is a comment made by the bot up the comment's chain
 def is_comment_reply_to_bot(comment):
     while not comment.is_root:
-        if comment.author and comment.author.name == bot_name:
-            return True
         comment = comment.parent()
+        if comment.author and comment.author.name.lower() == bot_name:
+            return True
     return False
 
 def reply_to_old_comments(comments):
