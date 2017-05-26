@@ -6,6 +6,7 @@ import re
 import sys
 import sqlite3
 import configparser
+import content_matching
 from datetime import datetime
 
 #sql commands
@@ -44,6 +45,23 @@ class NippyBot:
         self.reddit = praw.Reddit(praw_bot_name)
 
         self.setup_db(self.db_file, self.reset_database)
+        self.setup_matchers()
+
+    def setup_matchers(self):
+        brutal_nippy = "Brutal{0}Savage{0}Rekt{0}|Nippy{0}Kind{0}Langur{0}".format("[.,\s]+")
+        url = "gfycat.com/(BrutalSavageRekt|NippyKindLangur)"
+        simple_matcher = content_matching.ContentMatcher(patterns=[(url, None, 0),
+                                                                   (brutal_nippy, "[.,\s]", 20)])
+        chain_matcher1 = content_matching.ChainContentMatcher(patterns=[(x + "[.,\s]*", "[.,\s]", 15) for x in ["Rekt", "Savage", "Brutal"]])
+        chain_matcher2 = content_matching.ChainContentMatcher(patterns=[(x + "[.,\s]*", "[.,\s]", 15) for x in ["Langur", "Kind", "Nippy"]])
+
+        submission_matcher = content_matching.ContentMatcher(patterns=[(brutal_nippy, "[.,\s]", 0),
+                                                                       (brutal_nippy, "[.,\s]", 0),
+                                                                       (url, None, 0)])
+
+        self.comment_matchers = [simple_matcher, chain_matcher1, chain_matcher2]
+        self.submission_matchers = [submission_matcher]
+
 
     def setup_db(self, filename, reset_database=False):
         # connecting to database
@@ -84,3 +102,19 @@ class NippyBot:
                 print("WARNING: unrecognized category in 'get_submissions': {}".format(section))
 
         return result
+
+    def parse_comment(self, comment):
+        content = content_matching.CommentContent(comment)
+        for matcher in self.comment_matchers:
+            content.reset()
+            result = matcher.match(content)
+            if result:
+                return result
+
+    def parse_submission(self, submission):
+        content = content_matching.SubmissionContent(submission)
+        for matcher in self.submission_matchers:
+            content.reset()
+            result = matcher.match(content)
+            if result:
+                return result
