@@ -19,6 +19,8 @@ delete_to_reply = 'DELETE FROM to_reply WHERE ID = ?'
 class NippyBot:
     sql_creation = 'create_db.sql'
     sql_clean = 'clean_db.sql'
+    valid_categories = ['hot', 'new', 'top', 'controversial', 'rising']
+    default_category = 'hot'
 
     def __init__(self, bot_name='NippyBrutalBot',
                  praw_bot_name='bot1',
@@ -63,19 +65,22 @@ class NippyBot:
         limit_date = datetime.fromtimestamp(time.time() - self.post_age_limit)
         return submission_date > limit_date
 
-    def get_submissions(self, sub_names=None, get_new=False):
+    #section_limits should be arguments with the key being the category (e.g. hot, new, top) and value the limit of posts, e.g hot=5, new=10
+    def get_submissions(self, sub_names=None, **section_limits):
         if sub_names is None:
             sub_names = self.subreddits_to_search
         subs = self.reddit.subreddit(sub_names)
-        limit = self.posts_limit/2 if get_new else self.posts_limit
+        result = []
 
-        result = [submission for submission in subs.hot(limit=limit) if self.is_submission_fresh(submission)]
+        if not section_limits:
+            print("Getting default values in get_submissions")
+            section_limits[NippyBot.default_category] = self.posts_limit
 
-        if get_new:
-            if self.posts_limit%2==1:
-                limit = limit + 1
-            for submission in subs.new(limit=limit):
-                if self.is_submission_fresh(submission):
-                    result.append(submission)
+        for section, limit in section_limits.items():
+            if section in NippyBot.valid_categories:
+                func = getattr(subs, section)
+                result = result + [submission for submission in func(limit=limit) if self.is_submission_fresh(submission)]
+            else:
+                print("WARNING: unrecognized category in 'get_submissions': {}".format(section))
 
         return result
