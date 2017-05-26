@@ -217,7 +217,9 @@ for submission in subreddits.hot(limit=posts_limit):
             #do not reply if comment is reply to bot, or if parent was replied (or will be replied) to
             if comment.parent().id in to_reply_ids or was_comment_checked(comment.parent()) or is_comment_reply_to_bot(comment):
                 to_remove.add(comment)
-                to_remove.add(comment.parent())
+                parent = comment.parent()
+                if parent in to_reply:
+                    to_remove.add(parent)
 
         for comment in to_remove:
             if not was_comment_checked(comment):
