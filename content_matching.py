@@ -77,7 +77,7 @@ class ContentMatcher:
                 return None
             match = self.match_with_pattern(n, pattern, max_size)
             if match:
-                return (self.sanitize(match, sanitizer), content.current_id())
+                return [(self.sanitize(match, sanitizer), content.current_id())]
 
     def match_with_pattern(self, content, pattern, max_size):
         flags = re.IGNORECASE if self.ignore_case else 0
