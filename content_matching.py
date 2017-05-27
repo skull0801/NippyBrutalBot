@@ -71,10 +71,10 @@ class ContentMatcher:
         self.ignore_case = ignore_case
 
     def match(self, content):
+        n = content.next()
+        if n is None:
+            return None
         for pattern, sanitizer, max_size in self.patterns:
-            n = content.next()
-            if n is None:
-                return None
             match = self.match_with_pattern(n, pattern, max_size)
             if match:
                 return [(self.sanitize(match, sanitizer), content.current_id())]

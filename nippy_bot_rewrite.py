@@ -23,6 +23,22 @@ def log(*args, **kwargs):
 def log_error(*args, **kwargs):
     print(*args, **kwargs)
 
+def match_regex(content, pattern, sanitizer=None, max_size=0, ignore_case=True):
+    def sanitize(string, sanitizer=None):
+        if sanitizer:
+            return re.sub(sanitizer, '', string)
+        else:
+            return string
+
+    flags = re.IGNORECASE if ignore_case else 0
+    if max_size > 0 and len(content) > max_size:
+        return None
+    match = re.search(pattern, content, flags)
+    if match:
+        return sanitize(match[0], sanitizer=sanitizer)
+    else:
+        return None
+
 class NippyBot:
     sql_creation = 'create_db.sql'
     sql_clean = 'clean_db.sql'
@@ -60,26 +76,31 @@ class NippyBot:
                             "BrutalSavageRekt": 0,
                             "Rekt": 0,
                             "Langur": 1}
+        nip = "gfycat.com/NippyKindLangur"
+        bru = "gfycat.com/BrutalSavageRekt"
+        self.reply_regexes = {"gfycat.com/BrutalSavageRekt": nip,
+                              "gfycat.com/NippyKindLangur": bru,
+                              "NippyKindLangur": bru,
+                              "BrutalSavageRekt": nip,
+                              "Rekt": nip,
+                              "Langur": bru}
         self.reply_terms = dict((k.lower(), v) for k, v in self.reply_terms.items())
+        self.reply_regexes = dict((k.lower(), v) for k, v in self.reply_regexes.items())
         self.replies = ["https://gfycat.com/NippyKindLangur", "https://gfycat.com/BrutalSavageRekt"]
 
         self.setup_db(self.db_file, self.reset_database)
         self.setup_matchers()
 
     def setup_matchers(self):
-        brutal_nippy = "Brutal{0}Savage{0}Rekt{0}|Nippy{0}Kind{0}Langur{0}".format("[.,\s]+")
+        brutal_nippy = "Brutal{0}Savage{0}Rekt{0}|Nippy{0}Kind{0}Langur{0}".format("[.,\s]*")
         url = "gfycat.com/(BrutalSavageRekt|NippyKindLangur)"
-        simple_matcher1 = content_matching.ContentMatcher(patterns=[(url, None, 0)])
-        simple_matcher2 = content_matching.ContentMatcher(patterns=[(brutal_nippy, "[.,\s]", 100)])
+
+        simple_matcher = content_matching.ContentMatcher(patterns=[(url, None, 0), (brutal_nippy, "[.,\s]", 100)])
         chain_matcher1 = content_matching.ChainContentMatcher(patterns=[(x + "[.,\s]*", "[.,\s]", 15) for x in ["Rekt", "Savage", "Brutal"]])
         chain_matcher2 = content_matching.ChainContentMatcher(patterns=[(x + "[.,\s]*", "[.,\s]", 15) for x in ["Langur", "Kind", "Nippy"]])
 
-        submission_matcher = content_matching.ContentMatcher(patterns=[(brutal_nippy, "[.,\s]", 0),
-                                                                       (brutal_nippy, "[.,\s]", 0),
-                                                                       (url, None, 0)])
-
-        self.comment_matchers = [simple_matcher1, simple_matcher2, chain_matcher1, chain_matcher2]
-        self.submission_matchers = [submission_matcher]
+        self.comment_matchers = [simple_matcher, chain_matcher1, chain_matcher2]
+        self.submission_matchers = [(brutal_nippy, "[.,\s]", 0), (brutal_nippy, "[.,\s]", 0), (url, None, 0)]
 
 
     def setup_db(self, filename, reset_database=False):
@@ -93,9 +114,12 @@ class NippyBot:
             self.connection.commit()
 
         if reset_database:
-            with open(self.sql_clean) as f:
-                self.c.executescript(f.read())
-                self.connection.commit()
+            self.reset_db()
+
+    def reset_db(self):
+        with open(self.sql_clean) as f:
+            self.c.executescript(f.read())
+            self.connection.commit()
 
     def is_submission_fresh(self, submission):
         submission_date = datetime.fromtimestamp(submission.created_utc)
@@ -127,13 +151,23 @@ class NippyBot:
             if result:
                 return result
 
+
     def parse_submission(self, submission):
-        content = content_matching.SubmissionContent(submission)
-        for matcher in self.submission_matchers:
-            content.reset()
-            result = matcher.match(content)
+        if submission.is_self:
+            text_post_matcher = self.submission_matchers[0]
+            result = match_regex(submission.selftext, text_post_matcher[0], sanitizer=text_post_matcher[1], max_size=text_post_matcher[2])
             if result:
                 return result
+        title_matcher = self.submission_matchers[1]
+        result = match_regex(submission.title, title_matcher[0], sanitizer=title_matcher[1], max_size=title_matcher[2])
+        if result:
+            return result
+        if not submission.is_self:
+            url_matcher = self.submission_matchers[2]
+            result = match_regex(submission.url, url_matcher[0], sanitizer=url_matcher[1], max_size=url_matcher[2])
+            if result:
+                return result
+        return None
 
     def is_comment_logged(self, comment):
         self.c.execute(select_comment_with_id, [comment.id])
@@ -163,25 +197,41 @@ class NippyBot:
         parent = comment.parent()
         return parent.author and parent.author.name.lower() == bot_name
 
-    def validate_comments(self, comments):
-        ids = {comment.id for comment in comments}
+    def validate_comments(self, comments_to_reply, matches):
         invalid = set()
-        for comment in comments:
-            if comment.is_root:
+        for comment in comments_to_reply:
+            if comment in invalid:
                 continue
-            #do not reply if comment is reply to bot, or if parent was replied (or will be replied) to
-            parent = comment.parent()
-            if parent.id in ids or self.is_comment_logged(parent) or self.is_comment_reply_to_bot(comment):
+            found = []
+            regex = self.regex_for_reply_for_match(matches[comment.id])
+            replies = comment.replies
+            print(comment.body + " with " + regex + " " + comment.id)
+            for child in replies:
+                if child.body is not None:
+                    print("testing " + child.id)
+                    match = re.search(regex, child.body, re.IGNORECASE)
+                    if match:
+                        print("matched")
+                        found.append(child)
+                else:
+                    print("NULL " + child.id)
+            if found:
                 invalid.add(comment)
-                if parent in comments:
-                    invalid.add(parent)
+                invalid = invalid.union(found)
+            elif self.is_comment_reply_to_bot(comment) or (not comment.is_root and self.is_comment_logged(comment.parent())):
+                invalid.add(comment)
 
-        return list(comments - invalid), list(invalid)
+        return list(comments_to_reply - invalid), list(invalid)
 
     def reply_for_match(self, match):
         if match is None:
             return None
         return self.replies[self.reply_terms[match.lower()]]
+
+    def regex_for_reply_for_match(self, match):
+        if match is None:
+            return None
+        return self.reply_regexes[match.lower()]
 
     def reply_later(self, comment, reply):
         self.c.execute(insert_to_reply, [comment.id, reply])
@@ -232,42 +282,51 @@ class NippyBot:
         if not self.dry_run:
             submission.reply(reply)
 
+    def get_comments(self, submission):
+        all_comments = submission.comments
+        all_comments.replace_more(limit=None, threshold=0)
+        flat_comments = all_comments.list()
+        return flat_comments
+
+    def get_comments_to_reply(self, comments):
+        matches = dict()
+        to_reply = set()
+        comments_checked, comments_matched = 0, 0
+        for comment in comments:
+            #TODO handle better comments that were deleted
+            if comment.author is None:
+                continue
+            self.comments_checked += 1
+            comments_checked += 1
+
+            #comment not made or replied already by bot
+            if comment.author.name.lower() != self.bot_name and not self.is_comment_logged(comment):
+                match = self.parse_comment(comment)
+                if match is not None:
+                    matches[comment.id] = match[0][0]
+                    to_reply.add(comment)
+                    self.comments_matched += 1
+                    comments_matched += 1
+
+        return matches, to_reply, comments_checked, comments_matched
+
     def parse_submissions(self, submissions):
         comments_checked, comments_matched, comments_replied, comments_saved = 0, 0, 0, 0
         for submission in submissions:
             if not self.is_submission_logged(submission):
                 submission_match = self.parse_submission(submission)
                 if submission_match:
-                    self.reply_to_submission(submission, self.reply_for_match(submission_match[0][0]))
+                    self.reply_to_submission(submission, self.reply_for_match(submission_match))
                     self.log_submission(submission)
 
-            all_comments = submission.comments
-            all_comments.replace_more(limit=None, threshold=0)
-            flat_comments = all_comments.list()
+            comments = self.get_comments(submission)
 
-            matches = dict()
-            to_reply = set()
-
-            for comment in flat_comments:
-                #TODO handle better comments that were deleted
-                if comment.author is None:
-                    continue
-                self.comments_checked += 1
-                comments_checked += 1
-
-                #comment not made or replied already by bot
-                a = comment.author.name.lower() != self.bot_name
-                b = not self.is_comment_logged(comment)
-                if comment.author.name.lower() != self.bot_name and not self.is_comment_logged(comment):
-                    match = self.parse_comment(comment)
-                    if match is not None:
-                        matches[comment.id] = match[0][0]
-                        to_reply.add(comment)
-                        self.comments_matched += 1
-                        comments_matched += 1
+            matches, to_reply, checked, matched = self.get_comments_to_reply(comments)
+            comments_checked += checked
+            comments_matched += matched
 
             # remove comments already replied to or that are replies to something the bot would've replied
-            valid_comments, invalid_comments = self.validate_comments(to_reply)
+            valid_comments, invalid_comments = self.validate_comments(comments=to_reply, matches=matches)
 
             for comment in invalid_comments:
                 if not self.is_comment_logged(comment):
@@ -294,6 +353,10 @@ class NippyBot:
 
     def finish(self):
         self.connection.close()
+
+#TODO TODO TODO TODO
+# change match[0][0]
+# better logging (using files and stuff)
 
 if __name__ == '__main__':
     configs_file = 'test.cfg'
