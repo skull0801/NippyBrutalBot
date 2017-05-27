@@ -8,7 +8,7 @@ class ContentMatch:
     def has_next(self):
         return False
 
-    def current_id(self):
+    def current(self):
         return ''
 
     def reset(self):
@@ -32,7 +32,7 @@ class SubmissionContent(ContentMatch):
             self.index = self.index + 1
             return self.values[self.index]
 
-    def current_id(self):
+    def current(self):
         return self.submission.name
 
     def reset(self):
@@ -57,8 +57,8 @@ class CommentContent(ContentMatch):
             self.current_comment = self.comment
         return self.current_comment.body
 
-    def current_id(self):
-        return self.current_comment.id
+    def current(self):
+        return self.current_comment
 
     def reset(self):
         self.started = False
@@ -77,7 +77,7 @@ class ContentMatcher:
         for pattern, sanitizer, max_size in self.patterns:
             match = self.match_with_pattern(n, pattern, max_size)
             if match:
-                return [(self.sanitize(match, sanitizer), content.current_id())]
+                return [(self.sanitize(match, sanitizer), content.current())]
 
     def match_with_pattern(self, content, pattern, max_size):
         flags = re.IGNORECASE if self.ignore_case else 0
@@ -109,7 +109,7 @@ class ChainContentMatcher(ContentMatcher):
                 return None
             match = self.match_with_pattern(n, pattern, max_size)
             if match:
-                result.append((self.sanitize(match, sanitizer), content.current_id()))
+                result.append((self.sanitize(match, sanitizer), content.current()))
             else: # cancel search because one of the contents does not match
                 return None
         return result

@@ -131,7 +131,7 @@ class NippyBot:
         if sub_names is None:
             sub_names = self.subreddits_to_search
         subs = self.reddit.subreddit(sub_names)
-        result = []
+        result = set()
 
         if not section_limits:
             section_limits[NippyBot.default_category] = self.posts_limit
@@ -139,9 +139,9 @@ class NippyBot:
         for section, limit in section_limits.items():
             if section in NippyBot.valid_categories:
                 func = getattr(subs, section)
-                result = result + [submission for submission in func(limit=limit) if self.is_submission_fresh(submission)]
+                result = result.union({submission for submission in func(limit=limit) if self.is_submission_fresh(submission)})
 
-        return result
+        return list(result)
 
     def parse_comment(self, comment):
         content = content_matching.CommentContent(comment)
@@ -159,15 +159,18 @@ class NippyBot:
             if result:
                 return result
         title_matcher = self.submission_matchers[1]
-        result = match_regex(submission.title, title_matcher[0], sanitizer=title_matcher[1], max_size=title_matcher[2])
-        if result:
-            return result
+        result1 = match_regex(submission.title, title_matcher[0], sanitizer=title_matcher[1], max_size=title_matcher[2])
+        result2 = None
+
         if not submission.is_self:
             url_matcher = self.submission_matchers[2]
-            result = match_regex(submission.url, url_matcher[0], sanitizer=url_matcher[1], max_size=url_matcher[2])
-            if result:
-                return result
-        return None
+            result2 = match_regex(submission.url, url_matcher[0], sanitizer=url_matcher[1], max_size=url_matcher[2])
+
+        if result1 and result2: #if post has a match on title and links to it, don't reply
+            return None
+        if result1:
+            return result1
+        return result2
 
     def is_comment_logged(self, comment):
         self.c.execute(select_comment_with_id, [comment.id])
@@ -203,18 +206,13 @@ class NippyBot:
             if comment in invalid:
                 continue
             found = []
-            regex = self.regex_for_reply_for_match(matches[comment.id])
+            regex = self.regex_for_reply_for_match(matches[comment.id][0][0])
             replies = comment.replies
-            print(comment.body + " with " + regex + " " + comment.id)
             for child in replies:
                 if child.body is not None:
-                    print("testing " + child.id)
                     match = re.search(regex, child.body, re.IGNORECASE)
                     if match:
-                        print("matched")
                         found.append(child)
-                else:
-                    print("NULL " + child.id)
             if found:
                 invalid.add(comment)
                 invalid = invalid.union(found)
@@ -303,7 +301,7 @@ class NippyBot:
             if comment.author.name.lower() != self.bot_name and not self.is_comment_logged(comment):
                 match = self.parse_comment(comment)
                 if match is not None:
-                    matches[comment.id] = match[0][0]
+                    matches[comment.id] = match
                     to_reply.add(comment)
                     self.comments_matched += 1
                     comments_matched += 1
@@ -311,13 +309,14 @@ class NippyBot:
         return matches, to_reply, comments_checked, comments_matched
 
     def parse_submissions(self, submissions):
-        comments_checked, comments_matched, comments_replied, comments_saved = 0, 0, 0, 0
+        comments_checked, comments_matched, comments_replied, comments_saved, submissions_replied = 0, 0, 0, 0, 0
         for submission in submissions:
             if not self.is_submission_logged(submission):
                 submission_match = self.parse_submission(submission)
                 if submission_match:
                     self.reply_to_submission(submission, self.reply_for_match(submission_match))
                     self.log_submission(submission)
+                    submissions_replied += 1
 
             comments = self.get_comments(submission)
 
@@ -326,7 +325,7 @@ class NippyBot:
             comments_matched += matched
 
             # remove comments already replied to or that are replies to something the bot would've replied
-            valid_comments, invalid_comments = self.validate_comments(comments=to_reply, matches=matches)
+            valid_comments, invalid_comments = self.validate_comments(comments_to_reply=to_reply, matches=matches)
 
             for comment in invalid_comments:
                 if not self.is_comment_logged(comment):
@@ -336,10 +335,13 @@ class NippyBot:
 
             for comment in valid_comments:
                 match = matches[comment.id]
-                reply = self.reply_for_match(match)
+                reply = self.reply_for_match(match[0][0])
                 try:
                     self.reply_to_comment(comment, reply)
                     self.log_comment(comment)
+                    for m in match[1:]:
+                        #logging parent comments to the one being answered
+                        self.log_comment(m[1], valid=False)
                     self.comments_replied += 1
                     comments_replied += 1
                 except praw.exceptions.PRAWException as e:
@@ -349,14 +351,10 @@ class NippyBot:
                     self.comments_saved += 1
                     comments_saved += 1
 
-        return (comments_checked, comments_matched, comments_replied, comments_saved)
+        return (comments_checked, comments_matched, comments_replied, comments_saved, submissions_replied)
 
     def finish(self):
         self.connection.close()
-
-#TODO TODO TODO TODO
-# change match[0][0]
-# better logging (using files and stuff)
 
 if __name__ == '__main__':
     configs_file = 'test.cfg'
@@ -385,7 +383,7 @@ if __name__ == '__main__':
 
     submissions = bot.get_submissions(sub_names=subreddits_to_search, hot=30, new=30, rising=20)
     #result = bot.parse_submissions(submissions)
-    #log("All operations done. {} comments checked. {} comments matched. {} comments invalidated. {} comments replied to. {} comments saved for later.".format(comments_checked, comments_matched, comments_matched - comments_replied, comments_replied, comments_saved))
+    #log("All operations done. {} comments checked. {} comments matched. {} comments invalidated. {} comments replied to. {} comments saved for later. {} submissions replied to.".format(result[0], result[1], result[1] - result[2], result[3], result[4]))
     #log(time.strftime("End time: %a %Y-%m-%d %H:%M:%S", time.localtime()))
     #log("---------------------------------")
     #bot.finish()
