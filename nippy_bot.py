@@ -60,7 +60,7 @@ class NippyBot:
                  sleep_delay=1800,
                  verbose=False):
         # setting variables
-        self.bot_name = bot_name
+        self.bot_name = bot_name.lower()
         self.dry_run = dry_run
         self.subreddits_to_search = subreddits_to_search
         self.posts_limit = posts_limit
@@ -147,6 +147,9 @@ class NippyBot:
 
         return list(result)
 
+    def get_comments_from_sub(self, sub_names, limit):
+        return list(self.reddit.subreddit(sub_names).comments(limit=limit))
+
     def parse_comment(self, comment):
         content = content_matching.CommentContent(comment)
         for matcher in self.comment_matchers:
@@ -205,21 +208,21 @@ class NippyBot:
     def validate_comments(self, comments_to_reply, matches):
         invalid = set()
         for comment in comments_to_reply:
-            if comment in invalid:
-                continue
-            found = []
-            regex = self.regex_for_reply_for_match(matches[comment.id][0][0])
-            replies = comment.replies
-            for child in replies:
-                if child.body is not None:
-                    match = re.search(regex, child.body, re.IGNORECASE)
-                    if match:
-                        found.append(child)
-            if found:
+            has_parent = not comment.is_root
+            if self.is_comment_reply_to_bot(comment) or (has_parent and self.is_comment_logged(comment.parent())):
                 invalid.add(comment)
-                invalid = invalid.union(found)
-            elif self.is_comment_reply_to_bot(comment) or (not comment.is_root and self.is_comment_logged(comment.parent())):
-                invalid.add(comment)
+            elif has_parent:
+                parent = comment.parent()
+                if not parent.body:
+                    continue
+                match = self.parse_comment(parent)
+                if match:
+                    match = match[0][0]
+                    regex = self.regex_for_reply_for_match(match)
+                    possible = re.search(regex, comment.body, re.IGNORECASE)
+                    if possible:
+                        invalid.add(comment)
+                        invalid.add(parent)
 
         return list(comments_to_reply - invalid), list(invalid)
 
@@ -329,7 +332,46 @@ class NippyBot:
 
         return matches, to_reply, comments_checked, comments_matched
 
-    def parse_submissions(self, submissions):
+    def parse_comments(self, comments, commit=False):
+        comments_checked, comments_matched, comments_replied, comments_saved = 0, 0, 0, 0
+
+        matches, to_reply, checked, matched = self.get_comments_to_reply(comments)
+        comments_checked += checked
+        comments_matched += matched
+
+        # remove comments already replied to or that are replies to something the bot would've replied
+        valid_comments, invalid_comments = self.validate_comments(comments_to_reply=to_reply, matches=matches)
+
+        for comment in invalid_comments:
+            if not self.is_comment_logged(comment):
+                self.log_comment(comment, False)
+            if self.verbose:
+                log("Would've replied to {0}'s comment but it either was already replied to or is a reply. Original comment permalink: https://reddit.com{1}".format(comment.author, comment.permalink()))
+
+        for comment in valid_comments:
+            match = matches[comment.id]
+            reply = self.reply_for_match(match[0][0])
+            try:
+                self.reply_to_comment(comment, reply)
+                self.log_comment(comment)
+                for m in match[1:]:
+                    #logging parent comments to the one being answered
+                    self.log_comment(m[1], valid=False)
+                self.comments_replied += 1
+                comments_replied += 1
+            except praw.exceptions.PRAWException as e:
+                if self.verbose:
+                    log_error("Error when trying to reply to comment, saving for later. Comment permalink = https://reddit.com{}. [{}]".format(comment.permalink(), e))
+                self.reply_later(comment, reply)
+                self.comments_saved += 1
+                comments_saved += 1
+
+        if commit:
+            self.connection.commit()
+
+        return (comments_checked, comments_matched, comments_replied, comments_saved)
+
+    def parse_submissions(self, submissions, check_comments=True):
         comments_checked, comments_matched, comments_replied, comments_saved, submissions_replied = 0, 0, 0, 0, 0
         for submission in submissions:
             if not self.is_submission_logged(submission):
@@ -339,38 +381,17 @@ class NippyBot:
                     self.log_submission(submission)
                     submissions_replied += 1
 
+            if not check_comments:
+                continue
+                
             comments = self.get_comments(submission)
 
-            matches, to_reply, checked, matched = self.get_comments_to_reply(comments)
-            comments_checked += checked
-            comments_matched += matched
+            result = self.parse_comments(comments, commit=False)
 
-            # remove comments already replied to or that are replies to something the bot would've replied
-            valid_comments, invalid_comments = self.validate_comments(comments_to_reply=to_reply, matches=matches)
-
-            for comment in invalid_comments:
-                if not self.is_comment_logged(comment):
-                    self.log_comment(comment, False)
-                if self.verbose:
-                    log("Would've replied to {0}'s comment but it either was already replied to or is a reply. Original comment permalink: https://reddit.com{1}".format(comment.author, comment.permalink()))
-
-            for comment in valid_comments:
-                match = matches[comment.id]
-                reply = self.reply_for_match(match[0][0])
-                try:
-                    self.reply_to_comment(comment, reply)
-                    self.log_comment(comment)
-                    for m in match[1:]:
-                        #logging parent comments to the one being answered
-                        self.log_comment(m[1], valid=False)
-                    self.comments_replied += 1
-                    comments_replied += 1
-                except praw.exceptions.PRAWException as e:
-                    if self.verbose:
-                        log_error("Error when trying to reply to comment, saving for later. Comment permalink = https://reddit.com{}. [{}]".format(comment.permalink(), e))
-                    self.reply_later(comment, reply)
-                    self.comments_saved += 1
-                    comments_saved += 1
+            comments_checked += result[0]
+            comments_matched += result[1]
+            comments_replied += result[2]
+            comments_saved += result[3]
 
         self.connection.commit()
         return (comments_checked, comments_matched, comments_replied, comments_saved, submissions_replied)
