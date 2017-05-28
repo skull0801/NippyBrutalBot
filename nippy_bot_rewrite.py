@@ -17,11 +17,14 @@ select_to_reply = 'SELECT ID, RESPONSE FROM to_reply'
 select_to_reply_with_id = 'SELECT ID FROM to_reply WHERE ID = ?'
 delete_to_reply = 'DELETE FROM to_reply WHERE ID = ?'
 
+stdout = sys.stdout
+stderr = sys.stderr
+
 def log(*args, **kwargs):
-    print(*args, **kwargs)
+    print(*args, file=stdout, **kwargs)
 
 def log_error(*args, **kwargs):
-    print(*args, **kwargs)
+    print(time.strftime("%a %Y-%m-%d %H:%M:%S -", time.localtime()), *args, file=stderr, **kwargs)
 
 def match_regex(content, pattern, sanitizer=None, max_size=0, ignore_case=True):
     def sanitize(string, sanitizer=None):
@@ -369,6 +372,14 @@ if __name__ == '__main__':
     post_age_limit = eval(c['variables']['MaxPostAge'])
     reset_database = eval(c['variables']['ResetDB'])
     sleep_delay = eval(c['variables']['SleepDelay'])
+    out = c['variables']['LogFile']
+    err = c['variables']['ErrorLogFile']
+
+    if out != 'None':
+        stdout = open(out, 'a')
+
+    if err != 'None':
+        stderr = open(err, 'a')
 
     bot = NippyBot(bot_name=bot_name,
                    praw_bot_name='bot1',
@@ -381,9 +392,15 @@ if __name__ == '__main__':
                    sleep_delay=sleep_delay,
                    verbose=True)
 
+
+    log(time.strftime("Start time: %a %Y-%m-%d %H:%M:%S", time.localtime()))
+    log("Searching for new comments to reply on /r/{}.".format(subreddits_to_search))
     submissions = bot.get_submissions(sub_names=subreddits_to_search, hot=30, new=30, rising=20)
-    #result = bot.parse_submissions(submissions)
-    #log("All operations done. {} comments checked. {} comments matched. {} comments invalidated. {} comments replied to. {} comments saved for later. {} submissions replied to.".format(result[0], result[1], result[1] - result[2], result[3], result[4]))
-    #log(time.strftime("End time: %a %Y-%m-%d %H:%M:%S", time.localtime()))
-    #log("---------------------------------")
-    #bot.finish()
+    result = bot.parse_submissions(submissions)
+    log("All operations done. {} comments checked. {} comments matched. {} comments invalidated. {} comments replied to. {} comments saved for later. {} submissions replied to.".format(result[0], result[1], result[2], result[1] - result[2], result[3], result[4]))
+    log(time.strftime("End time: %a %Y-%m-%d %H:%M:%S", time.localtime()))
+    log("---------------------------------")
+    bot.finish()
+
+    stdout.close()
+    stderr.close()
