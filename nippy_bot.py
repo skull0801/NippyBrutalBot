@@ -1,4 +1,5 @@
 from __future__ import print_function
+import winsound
 import praw
 import os
 import time
@@ -190,12 +191,10 @@ class NippyBot:
     def log_comment(self, comment, valid=True):
         if not self.dry_run:
             self.c.execute(insert_comment, [comment.id, comment.permalink(), time.time(), 1 if valid else 0])
-            self.connection.commit()
 
     def log_submission(self, submission):
         if not self.dry_run:
             self.c.execute(insert_comment, [submission.name, submission.permalink, time.time(), 1])
-            self.connection.commit()
 
     def is_comment_reply_to_bot(self, comment):
         if comment.is_root:
@@ -236,7 +235,6 @@ class NippyBot:
 
     def reply_later(self, comment, reply):
         self.c.execute(insert_to_reply, [comment.id, reply])
-        self.connection.commit()
         if self.verbose:
             log("Saving comment [[{}]] to reply later, reply: \'{}\'".format(comment.id, reply))
 
@@ -244,6 +242,7 @@ class NippyBot:
         self.c.execute(select_to_reply)
         comments = self.c.fetchall()
         #TODO: validate if old_comments should still be replied to
+        replied = set()
         if comments and self.verbose:
             log("Replying to old comments. (There are {} comments to reply to).".format(len(comments)))
         for comment_info in comments:
@@ -252,8 +251,11 @@ class NippyBot:
                 self.reply_to_comment(comment, comment_info[1])
                 self.c.execute(delete_to_reply, [comment.id])
                 self.log_comment(comment, True)
+                replied.add(comment)
             except praw.exceptions.PRAWException as e:
-                return
+                return replied
+        self.connection.commit()
+        return replied
 
     def reply_to_comment(self, comment, reply=None):
         if reply is None:
@@ -282,6 +284,22 @@ class NippyBot:
             log("Replying to {0}'s post with {1}. Original post permalink: https://reddit.com{2}".format(submission.author.name, reply, submission.url))
         if not self.dry_run:
             submission.reply(reply)
+
+    def delete_comments(self, limit=100, from_subreddits=None, below_threshold=None):
+        if from_subreddits:
+            from_subreddits = [sub.lower() for sub in from_subreddits]
+        me = self.reddit.user.me()
+        comments = list(me.comments.new(limit=limit))
+        deleted = set()
+        for comment in comments:
+            sub_matches = not bool(from_subreddits) or comment.subreddit.display_name.lower() in from_subreddits
+            if sub_matches:
+                threshold_met = not bool(below_threshold) or comment.score < below_threshold
+                if threshold_met:
+                    comment.delete()
+                    deleted.add(comment)
+        return deleted
+
 
     def get_comments(self, submission):
         all_comments = submission.comments
@@ -354,24 +372,27 @@ class NippyBot:
                     self.comments_saved += 1
                     comments_saved += 1
 
+        self.connection.commit()
         return (comments_checked, comments_matched, comments_replied, comments_saved, submissions_replied)
 
     def finish(self):
         self.connection.close()
 
 if __name__ == '__main__':
-    configs_file = 'test.cfg'
+    winsound.Beep(700, 90)
+    configs_file = 'nippy_bot.cfg'
     c = configparser.ConfigParser()
     c.read(configs_file)
 
     bot_name = c['variables']['BotName'].lower()
     dry_run = eval(c['variables']['DryRun'])
     subreddits_to_search = c['variables']['Subs']
-    posts_limit = eval(c['variables']['MaxPosts'])
+    posts_limit = int(c['variables']['MaxPosts'])
     db_file = c['variables']['DataBaseFileName']
     post_age_limit = eval(c['variables']['MaxPostAge'])
     reset_database = eval(c['variables']['ResetDB'])
     sleep_delay = eval(c['variables']['SleepDelay'])
+    score_threshold = int(c['variables']['DeleteBelowScore'])
     out = c['variables']['LogFile']
     err = c['variables']['ErrorLogFile']
 
@@ -380,6 +401,8 @@ if __name__ == '__main__':
 
     if err != 'None':
         stderr = open(err, 'a')
+
+    log(time.strftime("Start time: %a %Y-%m-%d %H:%M:%S", time.localtime()))
 
     bot = NippyBot(bot_name=bot_name,
                    praw_bot_name='bot1',
@@ -392,15 +415,20 @@ if __name__ == '__main__':
                    sleep_delay=sleep_delay,
                    verbose=True)
 
+    limit = 10
+    log("Deleting comments below threshold. (limit={}, threshold={})".format(limit, score_threshold))
+    deleted = bot.delete_comments(limit=limit, from_subreddits=None, below_threshold=score_threshold)
+    for comment in deleted:
+        log("Deleted comment {} with score of {}.".format(comment.body, comment.score))
 
-    log(time.strftime("Start time: %a %Y-%m-%d %H:%M:%S", time.localtime()))
     log("Searching for new comments to reply on /r/{}.".format(subreddits_to_search))
-    submissions = bot.get_submissions(sub_names=subreddits_to_search, hot=30, new=30, rising=20)
+    submissions = bot.get_submissions(sub_names=subreddits_to_search, hot=50, new=50, rising=50)
     result = bot.parse_submissions(submissions)
-    log("All operations done. {} comments checked. {} comments matched. {} comments invalidated. {} comments replied to. {} comments saved for later. {} submissions replied to.".format(result[0], result[1], result[2], result[1] - result[2], result[3], result[4]))
+    log("All operations done. {} submissions checked. {} comments checked. {} comments matched. {} comments invalidated. {} comments replied to. {} comments saved for later. {} submissions replied to.".format(len(submissions), result[0], result[1], result[2], result[1] - result[2], result[3], result[4]))
     log(time.strftime("End time: %a %Y-%m-%d %H:%M:%S", time.localtime()))
     log("---------------------------------")
     bot.finish()
 
     stdout.close()
     stderr.close()
+    winsound.Beep(250, 150)
