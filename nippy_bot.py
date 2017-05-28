@@ -200,7 +200,7 @@ class NippyBot:
         if comment.is_root:
             return False
         parent = comment.parent()
-        return parent.author and parent.author.name.lower() == bot_name
+        return parent.author and parent.author.name.lower() == self.bot_name
 
     def validate_comments(self, comments_to_reply, matches):
         invalid = set()
@@ -424,7 +424,7 @@ if __name__ == '__main__':
     log("Searching for new comments to reply on /r/{}.".format(subreddits_to_search))
     submissions = bot.get_submissions(sub_names=subreddits_to_search, hot=50, new=50, rising=50)
     result = bot.parse_submissions(submissions)
-    log("All operations done. {} submissions checked. {} comments checked. {} comments matched. {} comments invalidated. {} comments replied to. {} comments saved for later. {} submissions replied to.".format(len(submissions), result[0], result[1], result[2], result[1] - result[2], result[3], result[4]))
+    log("All operations done. {} submissions checked. {} comments checked. {} comments matched. {} comments invalidated. {} comments replied to. {} comments saved for later. {} submissions replied to.".format(len(submissions), result[0], result[1], result[2], result[2], result[3], result[4]))
     log(time.strftime("End time: %a %Y-%m-%d %H:%M:%S", time.localtime()))
     log("---------------------------------")
     bot.finish()
