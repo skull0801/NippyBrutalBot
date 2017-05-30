@@ -297,7 +297,7 @@ class NippyBot:
         for comment in comments:
             sub_matches = not bool(from_subreddits) or comment.subreddit.display_name.lower() in from_subreddits
             if sub_matches:
-                threshold_met = not bool(below_threshold) or comment.score < below_threshold
+                threshold_met = below_threshold is None or comment.score < below_threshold
                 if threshold_met:
                     comment.delete()
                     deleted.add(comment)
@@ -383,7 +383,7 @@ class NippyBot:
 
             if not check_comments:
                 continue
-                
+
             comments = self.get_comments(submission)
 
             result = self.parse_comments(comments, commit=False)
@@ -443,7 +443,7 @@ if __name__ == '__main__':
         log("Deleted comment {} with score of {}.".format(comment.body, comment.score))
 
     log("Searching for new comments to reply on /r/{}.".format(subreddits_to_search))
-    submissions = bot.get_submissions(sub_names=subreddits_to_search, hot=50, new=50, rising=50)
+    submissions = bot.get_submissions(sub_names=subreddits_to_search, hot=50, rising=15, controversial=15)
     result = bot.parse_submissions(submissions)
     log("All operations done. {} submissions checked. {} comments checked. {} comments matched. {} comments invalidated. {} comments replied to. {} comments saved for later. {} submissions replied to.".format(len(submissions), result[0], result[1], result[2], result[2], result[3], result[4]))
     log(time.strftime("End time: %a %Y-%m-%d %H:%M:%S", time.localtime()))
