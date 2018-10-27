@@ -1,7 +1,7 @@
 # NippyBrutalBot
-
 ## This bot is currently inactive
 If you'd like to run this bot on your own, feel free to do so.
+
 
 This is a reddit bot that replies to comments on submissions on /r/Dota2 that link to certain gifs. 
 If a comment links to https://gfycat.com/BrutalSavageRekt it replies with https://gfycat.com/NippyKindLangur and vice-versa. It also replies comments that contain variations of the phrases "Brutal. Savage. Rekt." and "Nippy. Kind. Langur" with their respective gifs".
